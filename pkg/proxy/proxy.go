@@ -266,13 +266,13 @@ func (p *Proxy) validateDevicePath(path string) (string, error) {
 		return "", errors.New("empty HID path")
 	}
 
-	for devInfo, err := range hid.Enumerate() {
-		if err != nil {
+	for devInfo, err := range hid.Enumerate(hid.WithUsagePage(fidoUsagePage), hid.WithUsage(fidoUsage)) {
+		if devInfo == nil {
 			return "", err
 		}
 
-		if devInfo.UsagePage != fidoUsagePage || devInfo.Usage != fidoUsage {
-			continue
+		if err != nil {
+			p.logger.Warn("Incomplete HID metadata", "path", devInfo.Path, "err", err)
 		}
 
 		if strings.EqualFold(devInfo.Path, path) {
@@ -350,21 +350,21 @@ func readHIDRequest(reader io.Reader) ([][]byte, error) {
 	return reports, nil
 }
 
-func (p *Proxy) Enumerate() ([]*hid.DeviceInfo, error) {
-	devInfos := make([]*hid.DeviceInfo, 0)
-	for devInfo, err := range hid.Enumerate() {
-		if err != nil {
+func (p *Proxy) Enumerate() ([]hid.DeviceSnapshot, error) {
+	devices := make([]hid.DeviceSnapshot, 0)
+	for devInfo, err := range hid.Enumerate(hid.WithUsagePage(fidoUsagePage), hid.WithUsage(fidoUsage)) {
+		if devInfo == nil {
 			return nil, err
 		}
 
-		if devInfo.UsagePage != 0xf1d0 || devInfo.Usage != 0x01 {
-			continue
+		if err != nil {
+			p.logger.Warn("Incomplete HID metadata", "path", devInfo.Path, "err", err)
 		}
 
-		devInfos = append(devInfos, devInfo)
+		devices = append(devices, hid.DeviceSnapshot{DeviceInfo: devInfo, MetadataErr: err})
 	}
 
-	return devInfos, nil
+	return devices, nil
 }
 
 func (p *Proxy) Proxy(conn net.Conn, requestedPath string) {

@@ -1,25 +1,15 @@
 # telesma-app/windows-proxy
 
 `telesma-app/windows-proxy` is a Windows service that gives regular user applications access to FIDO2 HID devices.
-The service opens the devices with its own permissions and forwards CTAPHID data through a Windows named pipe.
+It opens devices with its own permissions and forwards CTAPHID data through `\\.\pipe\ctaphid`.
 
 The [`telesma-app/ctap`](https://github.com/telesma-app/ctap) library can use this service, so an application does not need
 to run as administrator.
 
-## Features
-
-- Runs as the `CtapProxy` Windows service.
-- Listens on `\\.\pipe\ctaphid`.
-- Lists connected FIDO2 HID devices.
-- Proxies CTAPHID packets in both directions.
-- Notifies clients when the device list may have changed.
-- Shares one physical HID connection across concurrent proxy sessions for each
-  device. CTAPHID channel IDs keep the clients isolated.
-
 ## Requirements
 
 - Windows
-- Go 1.26.3 or newer
+- Go 1.27.0 or newer
 - Administrator rights to install and manage the service
 
 ## Build and test
@@ -74,9 +64,12 @@ The service supports these commands:
 
 | Command | Value | Request | Result |
 |:--------|:------|:--------|:-------|
-| `CommandEnumerate` | `0x01` | Empty data | Returns a CBOR list of FIDO2 HID devices, then closes the connection |
+| `CommandEnumerate` | `0x01` | Empty data | Returns a CBOR `protocol.Enumeration`, then closes the connection |
 | `CommandStart` | `0x02` | CBOR device path from `CommandEnumerate` | Starts a raw CTAPHID stream on the same connection |
 | `CommandDevicesChanged` | `0x03` | Empty data | Keeps the connection open and sends empty notification messages |
+
+Encode device snapshots with `NewMessage(CommandEnumerate, Enumeration(devices))`
+and decode into `Enumeration` with `cbor.Unmarshal`.
 
 ### Raw CTAPHID stream
 

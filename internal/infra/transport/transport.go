@@ -175,7 +175,7 @@ func (d *pipeDelivery) handleConn(conn net.Conn) {
 			return
 		}
 
-		msg, err := proxyprotocol.NewMessage(proxyprotocol.CommandEnumerate, devInfos)
+		msg, err := proxyprotocol.NewMessage(proxyprotocol.CommandEnumerate, proxyprotocol.Enumeration(devInfos))
 		if err != nil {
 			d.logger.Error("NewMessage error", "err", err)
 			return

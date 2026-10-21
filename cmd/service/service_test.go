@@ -31,23 +31,25 @@ func TestIsFIDOEvent(t *testing.T) {
 			want:  true,
 		},
 		{
-			name: "FIDO device",
+			name: "FIDO device with descriptor error",
 			event: ghid.DeviceEvent{
 				Type: ghid.DeviceEventConnected,
 				DeviceInfo: &ghid.DeviceInfo{
 					UsagePage: 0xf1d0,
 					Usage:     0x01,
+					SerialNbr: ghid.Descriptor[string]{Err: errors.New("serial unavailable")},
 				},
 			},
 			want: true,
 		},
 		{
-			name: "non-FIDO device",
+			name: "non-FIDO device with descriptor error",
 			event: ghid.DeviceEvent{
 				Type: ghid.DeviceEventConnected,
 				DeviceInfo: &ghid.DeviceInfo{
 					UsagePage: 0x01,
 					Usage:     0x02,
+					SerialNbr: ghid.Descriptor[string]{Err: errors.New("serial unavailable")},
 				},
 			},
 		},
