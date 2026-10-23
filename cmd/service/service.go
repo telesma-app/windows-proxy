@@ -5,8 +5,7 @@ import (
 	"os"
 
 	ghid "github.com/telesma-app/hid"
-	"github.com/telesma-app/windows-proxy/internal/config"
-	"github.com/telesma-app/windows-proxy/internal/domain"
+	"github.com/telesma-app/windows-proxy/internal/infra/transport"
 	"github.com/telesma-app/windows-proxy/pkg/devnotify"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
@@ -17,12 +16,10 @@ const svcName = "CtapProxy"
 
 type program struct {
 	logger   *slog.Logger
-	config   *config.Config
-	delivery domain.Delivery
+	delivery *transport.Delivery
 }
 
 func (p *program) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
-	var wlog *eventlog.Log
 	wlog, err := eventlog.Open(svcName)
 	if err != nil {
 		p.logger.Error("Error while opening event log!", "err", err)
@@ -33,7 +30,9 @@ func (p *program) Execute(args []string, r <-chan svc.ChangeRequest, changes cha
 	}()
 
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
+
 	changes <- svc.Status{State: svc.StartPending}
+
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 
 	go func() {
@@ -53,11 +52,14 @@ func (p *program) Execute(args []string, r <-chan svc.ChangeRequest, changes cha
 
 	if statusHandle := svc.StatusHandle(); statusHandle != 0 {
 		_ = wlog.Info(1, "Registering device notification")
+
 		notification, err := devnotify.RegisterDeviceNotification(statusHandle)
 		if err != nil {
 			_ = wlog.Error(2, "Failed to register device notification")
+
 			os.Exit(1)
 		}
+
 		defer func() {
 			if err := devnotify.UnregisterDeviceNotification(notification); err != nil {
 				p.logger.Error("Failed to unregister device notification", "err", err)
@@ -71,14 +73,17 @@ func (p *program) Execute(args []string, r <-chan svc.ChangeRequest, changes cha
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
+
 				for event := range receiver.Listen() {
 					if isFIDOEvent(event) {
 						p.delivery.DevicesChanged()
 					}
 				}
 			}()
+
 			defer func() {
 				_ = receiver.Close()
+
 				<-done
 			}()
 		}
@@ -91,11 +96,13 @@ loop:
 			changes <- c.CurrentStatus
 		case svc.DeviceEvent:
 			p.delivery.DevicesChanged()
+
 			changes <- c.CurrentStatus
 		case svc.Stop, svc.Shutdown:
 			if err := p.delivery.Shutdown(); err != nil {
-				p.logger.Error("Error while shitting down main delivery!", "err", err)
+				p.logger.Error("Error while shutting down main delivery!", "err", err)
 			}
+
 			break loop
 		default:
 			p.logger.Info("Service shut down!", "cmd", c.Cmd)
@@ -103,6 +110,7 @@ loop:
 	}
 
 	changes <- svc.Status{State: svc.StopPending}
+
 	return
 }
 
@@ -110,9 +118,11 @@ func isFIDOEvent(event ghid.DeviceEvent) bool {
 	if event.Type != ghid.DeviceEventConnected && event.Type != ghid.DeviceEventDisconnected {
 		return false
 	}
+
 	if event.MetadataErr != nil || event.DeviceInfo == nil {
 		return true
 	}
+
 	return (event.DeviceInfo.UsagePage == 0 || event.DeviceInfo.UsagePage == 0xf1d0) &&
 		(event.DeviceInfo.Usage == 0 || event.DeviceInfo.Usage == 0x01)
 }
@@ -125,13 +135,16 @@ func (p *program) run(svcName string, isDebug bool) {
 	}
 
 	p.logger.Info("Starting service!", "svc_name", svcName)
+
 	run := svc.Run
 	if isDebug {
 		run = debug.Run
 	}
+
 	if err := run(svcName, p); err != nil {
 		p.logger.Error("Error while running service!", "err", err, "svc_name", svcName)
 		return
 	}
+
 	p.logger.Info("Service successfully shut down!", "svc_name", svcName)
 }

@@ -21,6 +21,15 @@ go build -o ctap-proxy-service.exe ./cmd/service
 go test ./...
 ```
 
+To lint on Windows with [golangci-lint v2](https://golangci-lint.run/docs/welcome/install/local/)
+built with Go 1.27 or newer:
+
+```powershell
+golangci-lint run ./...
+```
+
+On macOS or Linux, run `GOOS=windows golangci-lint run ./...`.
+
 ## Install the service
 
 Open PowerShell as administrator. Copy the executable to a permanent location, then create and start the service:

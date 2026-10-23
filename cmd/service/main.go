@@ -5,48 +5,36 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/telesma-app/windows-proxy/internal/config"
 	"github.com/telesma-app/windows-proxy/internal/infra/transport"
 	"github.com/telesma-app/windows-proxy/pkg/proxy"
 
 	"golang.org/x/sys/windows/svc"
 )
 
-var (
-	svcDebugMode       bool
-	transportDebugMode bool
-)
-
 func main() {
+	var svcDebugMode, transportDebugMode bool
 	flag.BoolVar(&svcDebugMode, "svcDebug", false, "Service debug mode")
 	flag.BoolVar(&transportDebugMode, "transportDebug", false, "Transport debug mode")
 	flag.Parse()
-
-	conf := &config.Config{
-		Transport: &transport.Config{
-			Address:                 "localhost:44080",
-			Debug:                   transportDebugMode,
-			AllowAuthenticatedUsers: true,
-		},
-	}
 
 	level := slog.LevelInfo
 	if svcDebugMode {
 		level = slog.LevelDebug
 	}
 
-	lvl := new(slog.LevelVar)
-	lvl.Set(level)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: lvl,
+		Level: level,
 	}))
 
 	prx := proxy.New(proxy.WithLogger(logger))
-	delivery := transport.NewDelivery(logger, conf.Transport, prx)
+	delivery := transport.NewDelivery(logger, &transport.Config{
+		Address:                 "localhost:44080",
+		Debug:                   transportDebugMode,
+		AllowAuthenticatedUsers: true,
+	}, prx)
 
 	prog := &program{
 		logger:   logger,
-		config:   conf,
 		delivery: delivery,
 	}
 

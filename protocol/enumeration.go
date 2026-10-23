@@ -23,6 +23,7 @@ func (devices Enumeration) MarshalCBOR() ([]byte, error) {
 	for i, device := range devices {
 		info := device.DeviceInfo
 		messages := make(map[string]string)
+
 		for field, err := range map[string]error{
 			"VendorID":   info.VendorID.Err,
 			"ProductID":  info.ProductID.Err,
@@ -36,6 +37,7 @@ func (devices Enumeration) MarshalCBOR() ([]byte, error) {
 				messages[field] = err.Error()
 			}
 		}
+
 		wire[i] = enumeratedDevice{DeviceInfo: info, Errors: messages}
 		if device.MetadataErr != nil {
 			wire[i].MetadataErr = new(device.MetadataErr.Error())
@@ -71,6 +73,7 @@ func (devices *Enumeration) UnmarshalCBOR(data []byte) error {
 				*target = errors.New(message)
 			}
 		}
+
 		decoded[i] = hid.DeviceSnapshot{DeviceInfo: info}
 		if device.MetadataErr != nil {
 			decoded[i].MetadataErr = errors.New(*device.MetadataErr)
@@ -78,5 +81,6 @@ func (devices *Enumeration) UnmarshalCBOR(data []byte) error {
 	}
 
 	*devices = decoded
+
 	return nil
 }

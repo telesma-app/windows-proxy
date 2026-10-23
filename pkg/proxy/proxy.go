@@ -73,9 +73,7 @@ func New(opts ...Option) *Proxy {
 		logger:  slog.Default(),
 		devices: make(map[string]*sharedDevice),
 	}
-	p.openDevice = func(path string) (hidDevice, error) {
-		return p.open(path)
-	}
+	p.openDevice = p.open
 	p.validate = p.validateDevicePath
 
 	for _, opt := range opts {
@@ -115,6 +113,7 @@ func (p *Proxy) acquireDevice(
 		done:     make(chan struct{}),
 		sessions: map[uint64]net.Conn{sessionID: conn},
 	}
+
 	p.devices[path] = shared
 	go shared.readReports()
 
@@ -123,6 +122,7 @@ func (p *Proxy) acquireDevice(
 
 func (p *Proxy) releaseDevice(path string, sessionID uint64, shared *sharedDevice) {
 	p.mu.Lock()
+
 	current := p.devices[path]
 	if current != shared {
 		p.mu.Unlock()
@@ -131,6 +131,7 @@ func (p *Proxy) releaseDevice(path string, sessionID uint64, shared *sharedDevic
 	}
 
 	delete(shared.sessions, sessionID)
+
 	if len(shared.sessions) != 0 {
 		p.mu.Unlock()
 
@@ -152,17 +153,21 @@ func (p *Proxy) failDevice(path string, shared *sharedDevice, err error) {
 	}
 
 	delete(p.devices, path)
+
 	connections := make([]net.Conn, 0, len(shared.sessions))
 	for _, conn := range shared.sessions {
 		connections = append(connections, conn)
 	}
+
 	clear(shared.sessions)
 	p.mu.Unlock()
 
-	if err != nil && !errors.Is(err, context.Canceled) {
+	if !errors.Is(err, context.Canceled) {
 		shared.logger.Error("Shared HID endpoint failed", "err", err)
 	}
+
 	shared.stop()
+
 	for _, conn := range connections {
 		_ = conn.Close()
 	}
@@ -171,6 +176,7 @@ func (p *Proxy) failDevice(path string, shared *sharedDevice, err error) {
 func (d *sharedDevice) stop() {
 	d.closeOnce.Do(func() {
 		d.cancel()
+
 		if err := d.device.Close(); err != nil {
 			d.logger.Error("HID close error", "err", err)
 		}
@@ -185,14 +191,16 @@ func (d *sharedDevice) close() {
 func (d *sharedDevice) readReports() {
 	defer close(d.done)
 
+	var buf [hidPacketSize]byte
 	for {
-		buf := make([]byte, hidPacketSize)
-		n, err := d.device.Read(d.ctx, buf)
+		n, err := d.device.Read(d.ctx, buf[:])
 		if n > 0 {
-			data := append([]byte(nil), buf[:n]...)
+			// Broadcasting completes before the next read reuses the buffer.
+			data := buf[:n]
 			d.broadcast(data)
 			d.logger.Debug("HID read", hidPacketLogAttrs(data, false)...)
 		}
+
 		if err != nil {
 			d.proxy.failDevice(d.path, d, err)
 
@@ -221,7 +229,9 @@ func (d *sharedDevice) broadcast(data []byte) {
 
 			continue
 		}
+
 		err := writeFull(conn, data)
+
 		_ = conn.SetWriteDeadline(time.Time{})
 		if err != nil {
 			_ = conn.Close()
@@ -229,15 +239,16 @@ func (d *sharedDevice) broadcast(data []byte) {
 	}
 }
 
-func (d *sharedDevice) writeReports(ctx context.Context, reports [][]byte) error {
+func (d *sharedDevice) writeReports(reports [][]byte) error {
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 
 	for _, report := range reports {
-		written, err := d.device.Write(ctx, report)
+		written, err := d.device.Write(d.ctx, report)
 		if err != nil {
 			return err
 		}
+
 		if written != len(report) {
 			return io.ErrShortWrite
 		}
@@ -248,8 +259,9 @@ func (d *sharedDevice) writeReports(ctx context.Context, reports [][]byte) error
 	return nil
 }
 
-func (p *Proxy) open(path string) (*hid.Device, error) {
+func (p *Proxy) open(path string) (hidDevice, error) {
 	runtime.LockOSThread()
+
 	defer runtime.UnlockOSThread()
 
 	dev, err := hid.OpenPath(path)
@@ -280,7 +292,7 @@ func (p *Proxy) validateDevicePath(path string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("HID path is not an enumerated FIDO device")
+	return "", errors.New("HID path is not an enumerated FIDO device")
 }
 
 func writeFull(w io.Writer, data []byte) error {
@@ -289,9 +301,11 @@ func writeFull(w io.Writer, data []byte) error {
 		if err != nil {
 			return err
 		}
+
 		if n == 0 {
 			return io.ErrShortWrite
 		}
+
 		data = data[n:]
 	}
 
@@ -305,6 +319,7 @@ func hidPacketLogAttrs(data []byte, hasReportID bool) []any {
 	if hasReportID {
 		offset = 1
 	}
+
 	if len(data) >= offset+5 {
 		attrs = append(
 			attrs,
@@ -321,6 +336,7 @@ func readHIDRequest(reader io.Reader) ([][]byte, error) {
 	if _, err := io.ReadFull(reader, first); err != nil {
 		return nil, err
 	}
+
 	if first[5]&0x80 == 0 {
 		return nil, errors.New("CTAPHID request starts with a continuation packet")
 	}
@@ -340,6 +356,7 @@ func readHIDRequest(reader io.Reader) ([][]byte, error) {
 		if _, err := io.ReadFull(reader, report); err != nil {
 			return nil, err
 		}
+
 		if !bytes.Equal(report[1:5], first[1:5]) || report[5] != byte(sequence) {
 			return nil, errors.New("invalid CTAPHID continuation packet")
 		}
@@ -352,6 +369,7 @@ func readHIDRequest(reader io.Reader) ([][]byte, error) {
 
 func (p *Proxy) Enumerate() ([]hid.DeviceSnapshot, error) {
 	devices := make([]hid.DeviceSnapshot, 0)
+
 	for devInfo, err := range hid.Enumerate(hid.WithUsagePage(fidoUsagePage), hid.WithUsage(fidoUsage)) {
 		if devInfo == nil {
 			return nil, err
@@ -376,26 +394,31 @@ func (p *Proxy) Proxy(conn net.Conn, requestedPath string) {
 	path, err := p.validate(requestedPath)
 	if err != nil {
 		logger.Warn("Rejected HID proxy start for non-FIDO path", "err", err)
+
 		_ = conn.Close()
+
 		return
 	}
+
 	logger = logger.With("path", path)
 
 	shared, err := p.acquireDevice(path, sessionID, conn)
 	if err != nil {
 		_ = conn.Close()
+
 		logger.Info("Proxy closed", "duration", time.Since(startedAt), "reason", "hid_open_error")
+
 		return
 	}
 	defer p.releaseDevice(path, sessionID, shared)
+
 	logger.Info("Proxy started")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	closeReason := "unknown"
+
 	defer func() {
 		_ = conn.Close()
+
 		logger.Info("Proxy closed", "duration", time.Since(startedAt), "reason", closeReason)
 	}()
 
@@ -409,14 +432,18 @@ func (p *Proxy) Proxy(conn net.Conn, requestedPath string) {
 				closeReason = "pipe_closed_with_partial_request"
 			default:
 				logger.Error("Pipe -> HID read error", "err", readErr)
+
 				closeReason = "pipe_read_error"
 			}
 
 			return
 		}
-		if writeErr := shared.writeReports(ctx, reports); writeErr != nil {
+
+		if writeErr := shared.writeReports(reports); writeErr != nil {
 			logger.Error("HID write error", "err", writeErr)
+
 			closeReason = "hid_write_error"
+
 			p.failDevice(path, shared, writeErr)
 
 			return

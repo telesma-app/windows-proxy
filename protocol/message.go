@@ -36,22 +36,21 @@ func payloadLength(data []byte) (uint16, error) {
 }
 
 func ParseMessage(reader io.Reader) (Message, error) {
-	cmd := make([]byte, 1)
-	if _, err := io.ReadFull(reader, cmd); err != nil {
+	var cmd [1]byte
+	if _, err := io.ReadFull(reader, cmd[:]); err != nil {
 		return Message{}, err
 	}
 
-	bLen := make([]byte, 2)
-	if _, err := io.ReadFull(reader, bLen); err != nil {
+	var bLen [2]byte
+	if _, err := io.ReadFull(reader, bLen[:]); err != nil {
 		return Message{}, err
 	}
-	length := binary.BigEndian.Uint16(bLen)
+
+	length := binary.BigEndian.Uint16(bLen[:])
 
 	bData := make([]byte, length)
-	if length > 0 {
-		if _, err := io.ReadFull(reader, bData); err != nil {
-			return Message{}, err
-		}
+	if _, err := io.ReadFull(reader, bData); err != nil {
+		return Message{}, err
 	}
 
 	return Message{
@@ -61,11 +60,8 @@ func ParseMessage(reader io.Reader) (Message, error) {
 }
 
 func NewMessage(cmd Command, data any) (Message, error) {
-	msg := Message{
-		Command: cmd,
-	}
-
 	b := make([]byte, 0)
+
 	var err error
 	if data != nil {
 		b, err = encMode.Marshal(data)
@@ -73,41 +69,39 @@ func NewMessage(cmd Command, data any) (Message, error) {
 			return Message{}, err
 		}
 	}
+
 	if _, err := payloadLength(b); err != nil {
 		return Message{}, err
 	}
 
-	msg.Data = b
-
-	return msg, nil
+	return Message{Command: cmd, Data: b}, nil
 }
 
-func (m *Message) WriteTo(w io.Writer) (n int64, err error) {
-	totalLen := 0
+func (m *Message) WriteTo(w io.Writer) (int64, error) {
 	length, err := payloadLength(m.Data)
 	if err != nil {
 		return 0, err
 	}
 
-	cmdLen, err := w.Write([]byte{byte(m.Command)})
-	if err != nil {
-		return 0, err
-	}
-	totalLen += cmdLen
+	var header [3]byte
 
-	bLen := make([]byte, 2)
-	binary.BigEndian.PutUint16(bLen, length)
-	lengthLen, err := w.Write(bLen)
-	if err != nil {
-		return 0, err
-	}
-	totalLen += lengthLen
+	header[0] = byte(m.Command)
+	binary.BigEndian.PutUint16(header[1:], length)
 
-	dataLen, err := w.Write(m.Data)
-	if err != nil {
-		return 0, err
-	}
-	totalLen += dataLen
+	var total int64
+	// Keep command, length, and payload as separate named-pipe messages.
+	for _, part := range [][]byte{header[:1], header[1:], m.Data} {
+		n, err := w.Write(part)
 
-	return int64(totalLen), nil
+		total += int64(n)
+		if err != nil {
+			return total, err
+		}
+
+		if n != len(part) {
+			return total, io.ErrShortWrite
+		}
+	}
+
+	return total, nil
 }

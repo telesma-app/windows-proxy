@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/telesma-app/windows-proxy/internal/domain"
 	"github.com/telesma-app/windows-proxy/pkg/proxy"
 	proxyprotocol "github.com/telesma-app/windows-proxy/protocol"
 
@@ -16,7 +15,8 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-type pipeDelivery struct {
+// Delivery serves proxy commands and device notifications over a listener.
+type Delivery struct {
 	logger *slog.Logger
 	config *Config
 	proxy  *proxy.Proxy
@@ -36,16 +36,14 @@ const (
 	notificationWriteTimeout = 5 * time.Second
 )
 
-func NewDelivery(logger *slog.Logger, config *Config, p *proxy.Proxy) domain.Delivery {
-	d := &pipeDelivery{
+func NewDelivery(logger *slog.Logger, config *Config, p *proxy.Proxy) *Delivery {
+	return &Delivery{
 		logger:      logger,
 		config:      config,
 		proxy:       p,
 		connections: make(map[net.Conn]struct{}),
 		subscribers: make(map[net.Conn]chan struct{}),
 	}
-
-	return d
 }
 
 func pipeSecurityDescriptor(config *Config) string {
@@ -61,14 +59,17 @@ func pipeSecurityDescriptor(config *Config) string {
 	b.WriteString(`(A;OICI;GA;;;S-1-5-32-544)`)
 	b.WriteString(`(A;OICI;GA;;;S-1-5-18)`)
 	b.WriteString(`(D;OICI;0x4;;;S-1-1-0)`)
+
 	if config.AllowAuthenticatedUsers {
 		b.WriteString(`(A;OICI;GRGW;;;S-1-5-11)`)
 	}
+
 	for _, sid := range config.AllowedClientSIDs {
 		sid = strings.TrimSpace(sid)
 		if sid == "" {
 			continue
 		}
+
 		b.WriteString(`(A;OICI;GRGW;;;`)
 		b.WriteString(sid)
 		b.WriteString(`)`)
@@ -77,11 +78,12 @@ func pipeSecurityDescriptor(config *Config) string {
 	return b.String()
 }
 
-func (d *pipeDelivery) Listen() (net.Listener, error) {
+func (d *Delivery) Listen() (net.Listener, error) {
 	addr := proxyprotocol.NamedPipePath
 	if d.config.Debug {
 		addr = d.config.Address
 	}
+
 	d.logger.Info("Listening transport requests.", "addr", addr)
 
 	if d.config.Debug {
@@ -94,17 +96,21 @@ func (d *pipeDelivery) Listen() (net.Listener, error) {
 	})
 }
 
-func (d *pipeDelivery) Serve(l net.Listener) error {
+func (d *Delivery) Serve(l net.Listener) error {
 	d.mu.Lock()
 	if d.stopping {
 		d.mu.Unlock()
+
 		_ = l.Close()
+
 		return nil
 	}
+
 	if d.listener != nil {
 		d.mu.Unlock()
 		return errors.New("transport is already serving")
 	}
+
 	d.listener = l
 	d.mu.Unlock()
 
@@ -122,21 +128,28 @@ func (d *pipeDelivery) Serve(l net.Listener) error {
 			d.mu.Lock()
 			stopping := d.stopping
 			d.mu.Unlock()
+
 			if stopping || errors.Is(err, net.ErrClosed) {
 				d.logger.Debug("Pipe listener closed")
 				return nil
 			}
+
 			d.logger.Error("Pipe accept error", "err", err)
+
 			continue
 		}
+
 		d.logger.Debug("Accepted pipe connection")
 
 		d.mu.Lock()
 		if d.stopping {
 			d.mu.Unlock()
+
 			_ = conn.Close()
+
 			continue
 		}
+
 		d.connections[conn] = struct{}{}
 		d.wg.Add(1)
 		d.mu.Unlock()
@@ -148,12 +161,13 @@ func (d *pipeDelivery) Serve(l net.Listener) error {
 				d.mu.Unlock()
 				d.wg.Done()
 			}()
+
 			d.handleConn(conn)
 		}()
 	}
 }
 
-func (d *pipeDelivery) handleConn(conn net.Conn) {
+func (d *Delivery) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(time.Now().Add(controlTimeout)); err != nil {
@@ -193,6 +207,7 @@ func (d *pipeDelivery) handleConn(conn net.Conn) {
 			d.logger.Error("Unmarshal error", "err", err)
 			return
 		}
+
 		if err := conn.SetDeadline(time.Time{}); err != nil {
 			d.logger.Error("Clear control deadline error", "err", err)
 			return
@@ -207,8 +222,10 @@ func (d *pipeDelivery) handleConn(conn net.Conn) {
 		}
 
 		notifications := make(chan struct{}, 1)
+
 		d.mu.Lock()
 		d.subscribers[conn] = notifications
+
 		d.mu.Unlock()
 		defer func() {
 			d.mu.Lock()
@@ -219,11 +236,15 @@ func (d *pipeDelivery) handleConn(conn net.Conn) {
 		clientClosed := make(chan struct{})
 		go func() {
 			defer close(clientClosed)
+
 			var b [1]byte
+
 			_, _ = conn.Read(b[:])
 		}()
+
 		defer func() {
 			_ = conn.Close()
+
 			<-clientClosed
 		}()
 
@@ -231,6 +252,7 @@ func (d *pipeDelivery) handleConn(conn net.Conn) {
 		case notifications <- struct{}{}:
 		default:
 		}
+
 		for {
 			select {
 			case <-notifications:
@@ -247,22 +269,19 @@ func (d *pipeDelivery) handleConn(conn net.Conn) {
 	}
 }
 
-func (d *pipeDelivery) writeDevicesChanged(conn net.Conn) error {
-	message, err := proxyprotocol.NewMessage(proxyprotocol.CommandDevicesChanged, nil)
-	if err != nil {
-		return err
-	}
-
+func (d *Delivery) writeDevicesChanged(conn net.Conn) error {
 	if err := conn.SetWriteDeadline(time.Now().Add(notificationWriteTimeout)); err != nil {
 		return err
 	}
 	defer func() { _ = conn.SetWriteDeadline(time.Time{}) }()
 
-	_, err = message.WriteTo(conn)
+	message := proxyprotocol.Message{Command: proxyprotocol.CommandDevicesChanged}
+	_, err := message.WriteTo(conn)
+
 	return err
 }
 
-func (d *pipeDelivery) DevicesChanged() {
+func (d *Delivery) DevicesChanged() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -274,11 +293,12 @@ func (d *pipeDelivery) DevicesChanged() {
 	}
 }
 
-func (d *pipeDelivery) Shutdown() error {
+func (d *Delivery) Shutdown() error {
 	d.shutdownOnce.Do(func() {
 		d.mu.Lock()
 		d.stopping = true
 		listener := d.listener
+
 		connections := make([]net.Conn, 0, len(d.connections))
 		for conn := range d.connections {
 			connections = append(connections, conn)
@@ -290,6 +310,7 @@ func (d *pipeDelivery) Shutdown() error {
 				d.shutdownErr = err
 			}
 		}
+
 		for _, conn := range connections {
 			_ = conn.Close()
 		}
