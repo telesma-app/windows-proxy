@@ -1,5 +1,7 @@
 # telesma-app/windows-proxy
 
+[![Go](https://github.com/telesma-app/windows-proxy/actions/workflows/go.yml/badge.svg)](https://github.com/telesma-app/windows-proxy/actions/workflows/go.yml)
+
 `telesma-app/windows-proxy` is a Windows service that gives regular user applications access to FIDO2 HID devices.
 It opens devices with its own permissions and forwards CTAPHID data through `\\.\pipe\ctaphid`.
 
@@ -9,28 +11,18 @@ to run as administrator.
 ## Requirements
 
 - Windows
-- Go 1.27.3 or newer
+- Go matching [`go.mod`](go.mod)
 - Administrator rights to install and manage the service
 
-## Build and test
+## Build
 
 Run these commands in PowerShell:
 
 ```powershell
 go build -o ctap-proxy-service.exe ./cmd/service
-go test ./...
 ```
 
-To lint on Windows with [golangci-lint v2](https://golangci-lint.run/docs/welcome/install/local/)
-built with Go 1.27.3 or newer:
-
-```powershell
-golangci-lint run ./...
-```
-
-On macOS or Linux, run `GOOS=windows golangci-lint run ./...`.
-
-## Install the service
+## Installation
 
 Open PowerShell as administrator. Copy the executable to a permanent location, then create and start the service:
 
@@ -98,6 +90,24 @@ another when a FIDO2 device may have been connected or removed.
 A notification does not contain device details. After receiving it, the client should use `CommandEnumerate` on a
 new connection and update its device list.
 
+## Development
+
+Run tests and static checks in PowerShell on Windows, with golangci-lint v2
+built using a Go version compatible with [`go.mod`](go.mod):
+
+```powershell
+$env:GOWORK = "off"
+go test ./...
+go vet ./...
+golangci-lint run ./...
+```
+
+On macOS or Linux, check the Windows code with:
+
+```sh
+GOWORK=off GOOS=windows golangci-lint run ./...
+```
+
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE).
