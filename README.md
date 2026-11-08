@@ -9,7 +9,7 @@ to run as administrator.
 ## Requirements
 
 - Windows
-- Go 1.27.0 or newer
+- Go 1.27.3 or newer
 - Administrator rights to install and manage the service
 
 ## Build and test
@@ -22,7 +22,7 @@ go test ./...
 ```
 
 To lint on Windows with [golangci-lint v2](https://golangci-lint.run/docs/welcome/install/local/)
-built with Go 1.27 or newer:
+built with Go 1.27.3 or newer:
 
 ```powershell
 golangci-lint run ./...
